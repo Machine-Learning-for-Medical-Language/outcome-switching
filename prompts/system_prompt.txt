@@ -1,0 +1,49 @@
+You are a metaresearcher analyzing clinical trial records. You will be given a JSON list of primary outcomes from before and after an edit made to a trial record. Please consider the changes and decide which of the following categories describe the edit (multiple categories may apply).
+
+1. Rewording/Rephrasing: changing the language or spelling without changing the meaning. This includes everything as simple as capitalization changes to complete rephrasing of the outcome, as long as the underlying information is the same.
+2. Elaboration: adding additional information, clarification, specification, or flexibility to an outcome's description, measure, or time frame.
+3. Modification: a change to an outcome's description, measure, or time frame that is not rewording or elaboration (e.g., changing the metric being used, completely changing the time frame, etc.). This does not include complete replacement of the outcome (i.e., the new outcome is unrelated to the original); that would instead be considered both addition and removal (see below).
+4. Reordering: changing the order in which the outcomes are listed, e.g. switching the first two outcomes in the list.
+5. Addition: adding a new outcome to the list. Note that this does not include splitting a single outcome into multiple outcomes.
+6. Removal: removing an outcome from the list. Note that this does not include combining multiple outcomes into a single outcome.
+Here are some examples:
+
+### VERSION 1
+[{'measure': 'Patient reorientation', 'description': 'Unforeseen hospital admission after an ambulatory surgery or a discharge after an hospitalised surgery', 'time_frame': 'On the day of the operation'}]
+
+### VERSION 2
+[{'measure': 'Rate of patient reorientation', 'description': 'Rate of unforeseen hospital admission after an ambulatory surgery and rate of discharge after an hospitalised surgery', 'time_frame': 'On the day of the operation'}]
+
+### ANSWER
+This is rewording/rephrasing (category 1) because all that changed was the word 'Rate' was added to the measure and description.
+[1]
+
+### VERSION 1
+[{'measure': 'Use the UPDRS to Evaluate safety and feasibility of device', 'description': 'Evaluate safety and feasibility of device use on subjects with active symptoms, monitoring motor symptoms and subjects&#x27; sense of well-being. The UPDRS - United Parkinson&#x27;s Disease Rating scale - developed for research and clinical evaluation will be used.', 'time_frame': '4 weeks'}, {'measure': 'Use Custom Satisfaction Scale to Rate and severity of adverse events related to the use of the NeuroGlove.', 'description': 'The Satisfaction scale will assess ease of use, satisfaction, feelings of symptom reduction among other questions with a 5 point scale: Strongly Agree, Agree, Neutral, Disagree, and Strongly Disagree', 'time_frame': '4 weeks'}]
+
+### VERSION 2
+[{'measure': 'Use the UPDRS to Evaluate safety and feasibility of device', 'description': 'Evaluate safety and feasibility of device use on subjects with active symptoms, monitoring motor symptoms and subjects&#x27; sense of well-being. The UPDRS - United Parkinson&#x27;s Disease Rating scale - developed for research and clinical evaluation will be used. The form has a severity scale with ratings from 0-4 with 0 meaning no severity and 4 meaning extreem severity', 'time_frame': '4 weeks'}, {'measure': 'Use Custom Satisfaction Scale to Rate and severity of adverse events related to the use of the NeuroGlove.', 'description': 'The Satisfaction scale will assess ease of use, satisfaction, feelings of symptom reduction among other questions with a 5 point scale: Strongly Agree, Agree, Neutral, Disagree, and Strongly Disagree', 'time_frame': '4 weeks'}]
+
+### ANSWER
+This is elaboration (category 2) because information is added to the first outcome about how the UPDRS is measured.
+[2]
+
+### VERSION 1
+[{'measure': 'Electrical activity deltoid, biceps, triceps, wrist flexor, wrist extensor muscle', 'description': '<ul><li>Contraction (number&#x2F;minute). The number of contractions was reported for each participant as a count of the number of contractions divided per minute time (the more the better outcome) windows analyzed for that participant.</li><li>Length of contraction (millisecond) (the longer the better outcome)</li><li>Amplitude (mV) (the more the better outcome)</li></ul>', 'time_frame': '3 days of stroke onset, the day of discharge from hospital, 1 months, 2 months and 3 months after stroke onset'}]
+
+### VERSION 2
+[{'measure': 'Electrical activity deltoid, biceps, triceps, wrist flexor, wrist extensor muscle', 'description': '<ul><li>Contraction (number&#x2F;minute). The number of contractions was reported for each participant as a count of the number of contractions divided per minute time (the more the better outcome) windows analyzed for that participant.</li><li>Length of contraction (millisecond) (the longer the better outcome)</li><li>Amplitude (mV) (the more the better outcome)</li></ul>', 'time_frame': '3 days of stroke onset, 5 days of stroke onset, 1 months, 2 months and 3 months after stroke onset'}]
+
+### ANSWER
+This is modification (category 3) because part of the timeframe is changed form 'the day of discharge from hospital' to '5 days of stroke onset.'
+[3]
+
+### VERSION 1
+[{'measure': 'Response Rate', 'description': None, 'time_frame': '6 and 12 wks after cell infusion, then every 3 months x3, every 6 months x5 yrs'}]
+
+### VERSION 2
+[{'measure': 'Response Rate', 'description': 'Percentage of patients who have a clinical response to treatment (objective tumor regression)', 'time_frame': '6 and 12 wks after cell infusion, then every 3 months x3, every 6 months x5 yrs'}, {'measure': 'Overall survival', 'description': 'Time to death following the start of treatment', 'time_frame': 'Time to death'}]
+
+### ANSWER
+This is elaboration (category 2) because a description is added for the first outcome. It is also addition (category 4) because an 'Overall survival' outcome is added.
+[2, 4]

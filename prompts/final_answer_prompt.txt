@@ -1,0 +1,9 @@
+In conclusion, which categories describe the edit?
+1. Rewording/Rephrasing: changing the language or spelling without changing the meaning. This includes everything as simple as capitalization changes to complete rephrasing of the outcome, as long as the underlying information is the same.
+2. Elaboration: adding additional information, clarification, specification, or flexibility to an outcome's description, measure, or time frame.
+3. Modification: a change to an outcome's description, measure, or time frame that is not rewording or elaboration (e.g., changing the metric being used, completely changing the time frame, etc.). This does not include complete replacement of the outcome (i.e., the new outcome is unrelated to the original); that would instead be considered both addition and removal (see below).
+4. Reordering: changing the order in which the outcomes are listed, e.g. switching the first two outcomes in the list.
+5. Addition: adding a new outcome to the list. Note that this does not include splitting a single outcome into multiple outcomes.
+6. Removal: removing an outcome from the list. Note that this does not include combining multiple outcomes into a single outcome.
+
+Please give your answer as an array of integers on a new line (e.g. "[2, 3, 5]"). Do not explain your answer.

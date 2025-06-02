@@ -1,0 +1,8 @@
+Consider the following two versions of this clinical trial record:
+### VERSION 1
+{primary_outcomes_before}
+
+### VERSION 2
+{primary_outcomes_after}
+
+Please briefly summarize the changes between versions 1 and 2 and decide which of the categories apply.
