@@ -1,49 +1,197 @@
 You are a metaresearcher analyzing clinical trial records. You will be given a JSON list of primary outcomes from before and after an edit made to a trial record. Please consider the changes and decide which of the following categories describe the edit (multiple categories may apply).
 
-1. Rewording/Rephrasing: changing the language or spelling without changing the meaning. This includes everything as simple as capitalization changes to complete rephrasing of the outcome, as long as the underlying information is the same.
-2. Elaboration: adding additional information, clarification, specification, or flexibility to an outcome's description, measure, or time frame.
-3. Modification: a change to an outcome's description, measure, or time frame that is not rewording or elaboration (e.g., changing the metric being used, completely changing the time frame, etc.). This does not include complete replacement of the outcome (i.e., the new outcome is unrelated to the original); that would instead be considered both addition and removal (see below).
-4. Reordering: changing the order in which the outcomes are listed, e.g. switching the first two outcomes in the list.
-5. Addition: adding a new outcome to the list. Note that this does not include splitting a single outcome into multiple outcomes.
-6. Removal: removing an outcome from the list. Note that this does not include combining multiple outcomes into a single outcome.
-Here are some examples:
+**Rewording/Rephrasing:**
+  Rewording/rephrasing is defined as changing the language or spelling of an outcome without changing the meaning. This includes everything as simple as capitalization changes to complete rephrasing of the outcome, as long as the underlying information is the same.
+
+**Elaboration:**
+  Elaboration is defined as adding additional information, clarification, specification, or flexibility to an outcome's description, measure, or time frame.
+
+**Modification:**
+  Modification is defined as a change to an outcome's description, measure, or time frame that is not just rewording or elaboration. This may include switching to a different metric for the same outcome, completely changing the measurement time frame, etc. This does not include removing an outcome completely and adding a different one in its place (i.e., the new outcome is unrelated to the original).
+
+**Addition:**
+  Addition is defined as adding a new outcome to the list. This does not include splitting a single outcome into multiple outcomes.
+
+**Removal:**
+  Removal is defined as removing an outcome from the list. This does not include combining multiple outcomes into a single outcome.
+
+Here are some example edits and their respective categories:
 
 ### VERSION 1
-[{'measure': 'Patient reorientation', 'description': 'Unforeseen hospital admission after an ambulatory surgery or a discharge after an hospitalised surgery', 'time_frame': 'On the day of the operation'}]
+[
+  {
+    "measure": "Sensory Integration and Praxis Test (SIPT)",
+    "description": "Developed by Ayres, is a standardized performance-based observational test that evaluates sensory perception and sensory perception-based skills in detail in children between the ages of 4 and 8 years and 11 months. SIPT, is one of the important gold tests in evaluating sensory development.",
+    "time_frame": "SIPT will also be used in the initial and final assessment at week 1 and week 12. SIPT measures the change in sensory skills.Getting a high score on the test means good performance."
+  },
+  {
+    "measure": "Bruininks-Oseretsky Motor Proficiency Test-2 (BOT-2)",
+    "description": "Bruininks-Oseretsky Motor Proficiency Test-2 (BOT-2) is a test developed for children aged 4-21 and developed to measure the motor functions of children. BOT-2 is an observational assessment evaluating motor performance, consisting of 8 subtests and 12 items in total. It consists of fine motor accuracy, fine motor integration, dexterity, bilateral coordination, balance, upper extremity coordination, endurance, speed and agility subtests.",
+    "time_frame": "BOT-2 will also be used in the initial and final assessment at week 1 and week 12. BOT-2 measures the change in motor skills. Getting a high score on the test means good performance."
+  },
+  {
+    "measure": "Goal Attainment Scale (GAS)",
+    "description": "The Goal Attainment Scale (GAS) is used to evaluate the achievement of functional therapy goals in children receiving treatment in pediatric services. It helps to set priorities and clear goals for intervention. It provides the child&#x27;s continuous interest in the set goals and offers a person-centered approach. The determined goals should be specific, measurable, achievable, relevant and well-timed. While applying GAS, goals are set for the child and possible outcomes are defined for each goal. After a certain intervention, the functional status of the child is determined again. GAS consists of 5 points as -2, -1, 0, +1 and +2. A score of -2 indicates the child&#x27;s pre-intervention baseline level, a score of -1 indicates a development below the expected attainment level, a score of 0 indicates an expected attainment level, a score of +1 indicates a better-than-expected achievement, and a score of +2 indicates that the child performs much better than expected.",
+    "time_frame": "GAS will also be used in the initial and final assessment at week 1 and week 12. GAS measures the change in behavior. Maximum +2 and minimum -2 points are taken. +2 means the best result."
+  },
+  {
+    "measure": "Stroop Test TBAG Form (Stroop TBAG)",
+    "description": "The Stroop Test TBAG Form (Stroop TBAG) is one of the golden tests used to measure selective attention and ability to shift attention, focusing on the color used in the spelling of the word and the disruptive effect of the color in the pronunciation of the word.",
+    "time_frame": "Stroop TBAG will also be used in the initial and final assessment at week 1 and week 12. Stroop TBAG measures the change in cognitive skills. Getting a high score on the test means good performance."
+  }
+]
 
 ### VERSION 2
-[{'measure': 'Rate of patient reorientation', 'description': 'Rate of unforeseen hospital admission after an ambulatory surgery and rate of discharge after an hospitalised surgery', 'time_frame': 'On the day of the operation'}]
+[
+  {
+    "measure": "Sensory Integration and Praxis Test (SIPT)",
+    "description": "Developed by Ayres, is a standardized performance-based observational test that evaluates sensory perception and sensory perception-based skills in detail in children between the ages of 4 and 8 years and 11 months. SIPT, is one of the important gold tests in evaluating sensory development.",
+    "time_frame": "SIPT will also be used in the initial and final assessment at week 1 and week 12. SIPT measures the change in sensory skills.Getting a high score on the test means good performance."
+  },
+  {
+    "measure": "Bruininks-Oseretsky Motor Proficiency Test-2 (BOT-2)",
+    "description": "Bruininks-Oseretsky Motor Proficiency Test-2 (BOT-2) is a test developed for children aged 4-21 and developed to measure the motor functions of children. BOT-2 is an observational assessment evaluating motor performance, consisting of 8 subtests and 12 items in total. It consists of fine motor accuracy, fine motor integration, dexterity, bilateral coordination, balance, upper extremity coordination, endurance, speed and agility subtests.",
+    "time_frame": "BOT-2 will also be used in the initial and final assessment at week 1 and week 12. BOT-2 measures the change in motor skills. Getting a high score on the test means good performance."
+  },
+  {
+    "measure": "Goal Attainment Scale (GAS)",
+    "description": "The Goal Attainment Scale (GAS) is used to evaluate the achievement of functional therapy goals in children receiving treatment in pediatric services. It helps to set priorities and clear goals for intervention. It provides the child&#x27;s continuous interest in the set goals and offers a person-centered approach. The determined goals should be specific, measurable, achievable, relevant and well-timed. While applying GAS, goals are set for the child and possible outcomes are defined for each goal. After a certain intervention, the functional status of the child is determined again. GAS consists of 5 points as -2, -1, 0, +1 and +2. A score of -2 indicates the child&#x27;s pre-intervention baseline level, a score of -1 indicates a development below the expected attainment level, a score of 0 indicates an expected attainment level, a score of +1 indicates a better-than-expected achievement, and a score of +2 indicates that the child performs much better than expected.",
+    "time_frame": "GAS will also be used in the initial and final assessment at week 1 and week 12. GAS measures the change in behavior. Maximum +2 and minimum -2 points are taken. +2 means the best result."
+  }
+]
+
+### EXPLANATION
+This edit is a **Removal** because the "Stroop Test TBAG Form" outcome was removed.
 
 ### ANSWER
-This is rewording/rephrasing (category 1) because all that changed was the word 'Rate' was added to the measure and description.
-[1]
+Removal
 
 ### VERSION 1
-[{'measure': 'Use the UPDRS to Evaluate safety and feasibility of device', 'description': 'Evaluate safety and feasibility of device use on subjects with active symptoms, monitoring motor symptoms and subjects&#x27; sense of well-being. The UPDRS - United Parkinson&#x27;s Disease Rating scale - developed for research and clinical evaluation will be used.', 'time_frame': '4 weeks'}, {'measure': 'Use Custom Satisfaction Scale to Rate and severity of adverse events related to the use of the NeuroGlove.', 'description': 'The Satisfaction scale will assess ease of use, satisfaction, feelings of symptom reduction among other questions with a 5 point scale: Strongly Agree, Agree, Neutral, Disagree, and Strongly Disagree', 'time_frame': '4 weeks'}]
+[
+  {
+    "measure": "Body Mass Index Change",
+    "description": "Body mass index (units of kg&#x2F;m^2) will be calculated based on body weight and height of participants. Body weight will be measured to the nearest tenth of a kg using a standard scale. Height will be assessed with a stadiometer or wall ruler (to the nearest tenth of a centimeter). Both procedures will be measured in a private room.",
+    "time_frame": "Change from baseline at 8-weeks"
+  }
+]
 
 ### VERSION 2
-[{'measure': 'Use the UPDRS to Evaluate safety and feasibility of device', 'description': 'Evaluate safety and feasibility of device use on subjects with active symptoms, monitoring motor symptoms and subjects&#x27; sense of well-being. The UPDRS - United Parkinson&#x27;s Disease Rating scale - developed for research and clinical evaluation will be used. The form has a severity scale with ratings from 0-4 with 0 meaning no severity and 4 meaning extreem severity', 'time_frame': '4 weeks'}, {'measure': 'Use Custom Satisfaction Scale to Rate and severity of adverse events related to the use of the NeuroGlove.', 'description': 'The Satisfaction scale will assess ease of use, satisfaction, feelings of symptom reduction among other questions with a 5 point scale: Strongly Agree, Agree, Neutral, Disagree, and Strongly Disagree', 'time_frame': '4 weeks'}]
+[
+  {
+    "measure": "School Breakfast Program Participation",
+    "description": "Participation at during the traditional school breakfast program and throughout the Breakfast in the Classroom program will be determined by the electronic school meal tracking system that logs student participation each day for breakfast and lunch.",
+    "time_frame": "3-weeks prior to program initiation and 3-weeks of program"
+  }
+]
+
+### EXPLANATION
+This edit is **Addition** and **Removal** because the "Body Mass Index Change" outcome was removed and replaced with a different outcome, "School Breakfast Program Participation". This is *not* a **Modification**, because the outcome was completely replaced rather than being modified.
 
 ### ANSWER
-This is elaboration (category 2) because information is added to the first outcome about how the UPDRS is measured.
-[2]
+Addition, Removal
 
 ### VERSION 1
-[{'measure': 'Electrical activity deltoid, biceps, triceps, wrist flexor, wrist extensor muscle', 'description': '<ul><li>Contraction (number&#x2F;minute). The number of contractions was reported for each participant as a count of the number of contractions divided per minute time (the more the better outcome) windows analyzed for that participant.</li><li>Length of contraction (millisecond) (the longer the better outcome)</li><li>Amplitude (mV) (the more the better outcome)</li></ul>', 'time_frame': '3 days of stroke onset, the day of discharge from hospital, 1 months, 2 months and 3 months after stroke onset'}]
+[
+  {
+    "measure": "Percent of patient event free",
+    "description": null,
+    "time_frame": "At 24 weeks"
+  }
+]
 
 ### VERSION 2
-[{'measure': 'Electrical activity deltoid, biceps, triceps, wrist flexor, wrist extensor muscle', 'description': '<ul><li>Contraction (number&#x2F;minute). The number of contractions was reported for each participant as a count of the number of contractions divided per minute time (the more the better outcome) windows analyzed for that participant.</li><li>Length of contraction (millisecond) (the longer the better outcome)</li><li>Amplitude (mV) (the more the better outcome)</li></ul>', 'time_frame': '3 days of stroke onset, 5 days of stroke onset, 1 months, 2 months and 3 months after stroke onset'}]
+[
+  {
+    "measure": "Event-free survival of DS-8201A for HER2+ osteosarcoma",
+    "description": "Frequency (%) of evaluable patients who are event-free after 24 weeks (4-months) of therapy.",
+    "time_frame": "At 24 weeks"
+  }
+]
+
+### EXPLANATION
+This edit is **Elaboration** because the outcome was underspecified in Version 1, and Version 2 changed the "measure" field to be more descriptive and added text to the "description" field. Note that this is *not* **Rewording/Rephrasing** despite the "measure" field changing, since information was added.
 
 ### ANSWER
-This is modification (category 3) because part of the timeframe is changed form 'the day of discharge from hospital' to '5 days of stroke onset.'
-[3]
+Elaboration
 
 ### VERSION 1
-[{'measure': 'Response Rate', 'description': None, 'time_frame': '6 and 12 wks after cell infusion, then every 3 months x3, every 6 months x5 yrs'}]
+[
+  {
+    "measure": "MTD, defined as the maximum dose at which fewer than one-third of patients experience a dose-limiting toxicity (DLT) graded by the National Cancer Institute (NCI) Common Terminology Criteria for Adverse Events (CTCAE) version 4.0",
+    "description": null,
+    "time_frame": "Up to 42 days"
+  },
+  {
+    "measure": "Incidence and grade of adverse events using the NCI CTCAE version 4.0",
+    "description": null,
+    "time_frame": "Up to 4 years"
+  }
+]
 
 ### VERSION 2
-[{'measure': 'Response Rate', 'description': 'Percentage of patients who have a clinical response to treatment (objective tumor regression)', 'time_frame': '6 and 12 wks after cell infusion, then every 3 months x3, every 6 months x5 yrs'}, {'measure': 'Overall survival', 'description': 'Time to death following the start of treatment', 'time_frame': 'Time to death'}]
+[
+  {
+    "measure": "MTD, defined as the maximum dose at which fewer than one-third of patients experience a dose-limiting toxicity graded by the National Cancer Institute (NCI) Common Terminology Criteria for Adverse Events (CTCAE) version 4.0",
+    "description": null,
+    "time_frame": "Up to 42 days"
+  },
+  {
+    "measure": "Incidence and grade of adverse events using the NCI CTCAE version 4.0",
+    "description": null,
+    "time_frame": "Up to 4 years"
+  }
+]
+
+### EXPLANATION
+This edit is **Rewording/Rephrasing** because the abbreviation "(DLT)" was removed from the first outcome measure.
 
 ### ANSWER
-This is elaboration (category 2) because a description is added for the first outcome. It is also addition (category 4) because an 'Overall survival' outcome is added.
-[2, 4]
+Rewording/Rephrasing
+
+### VERSION 1
+[
+  {
+    "measure": "Serious Adverse Events",
+    "description": "The proportion of participants enrolled that underwent a device related Serious Adverse Events (SAEs). SAEs include Grade 3-4 bleeding (bleeding causing cardiopulmonary instability or requiring inflation of a bronchial blocker), pneumothorax requiring chest tube placement (Grade 2+), or 30-day respiratory failure and death.",
+    "time_frame": "Within 30 days of procedure"
+  }
+]
+
+### VERSION 2
+[
+  {
+    "measure": "Number of Participants With Serious Adverse Events",
+    "description": "The number of participants enrolled who experienced a device related Serious Adverse Events (SAEs). SAEs include Grade 3-4 bleeding (bleeding causing cardiopulmonary instability or requiring inflation of a bronchial blocker), pneumothorax requiring chest tube placement (Grade 2+), or 30-day respiratory failure and death.",
+    "time_frame": "Within 30 days of procedure"
+  }
+]
+
+### EXPLANATION
+This edit is **Modification** because the quantity being measured has changed from "proportion of participants" to "number of participants". This is **Modification** because the proportion is a fundamentally different metric than the absolute quantity. This edit is also **Rewording/Rephrasing** because the words "that underwent" were replaced with "who experienced", which is a different way of saying the same thing.
+
+### ANSWER
+Modification, Rewording/Rephrasing
+
+### VERSION 1
+[
+  {
+    "measure": "Change from Baseline Participation at 6 months",
+    "description": "Participation Assessment with Recombined Tools - Objective (PART-O)",
+    "time_frame": "Baseline to 6 months"
+  }
+]
+
+### VERSION 2
+[
+  {
+    "measure": "Change from Baseline Participation at 4 months",
+    "description": "Community Integration Questionnaire (CIQ)",
+    "time_frame": "Baseline to 4 months"
+  }
+]
+
+### EXPLANATION
+This edit is **Modification** because the time frame has changed from 6 months to 4 months, and the metric has changed from "PART-O" to "CIQ".
+
+### ANSWER
+Modification

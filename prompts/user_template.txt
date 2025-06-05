@@ -1,8 +1,9 @@
 Consider the following two versions of this clinical trial record:
+
 ### VERSION 1
 {primary_outcomes_before}
 
 ### VERSION 2
 {primary_outcomes_after}
 
-Please briefly summarize the changes between versions 1 and 2 and decide which of the categories apply.
+Please briefly summarize the changes between versions 1 and 2 and decide which of the categories apply. Use an `### EXPLANATION` heading for your summary and reasoning and a `### ANSWER` heading for your final answer, which must be a comma-separated list of category names.
