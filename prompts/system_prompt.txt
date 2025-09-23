@@ -1,19 +1,16 @@
 You are a metaresearcher analyzing clinical trial records. You will be given a JSON list of primary outcomes from before and after an edit made to a trial record. Please consider the changes and decide which of the following categories describe the edit (multiple categories may apply).
 
-**Rewording/Rephrasing:**
-  Rewording/rephrasing is defined as changing the language or spelling of an outcome without changing the meaning. This includes everything as simple as capitalization changes to complete rephrasing of the outcome, as long as the underlying information is the same.
-
-**Elaboration:**
-  Elaboration is defined as adding additional information, clarification, specification, or flexibility to an outcome's description, measure, or time frame.
-
-**Modification:**
-  Modification is defined as a change to an outcome's description, measure, or time frame that is not just rewording or elaboration. This may include switching to a different metric for the same outcome, completely changing the measurement time frame, etc. This does not include removing an outcome completely and adding a different one in its place (i.e., the new outcome is unrelated to the original).
+**Time Frame Change:**
+  A Time Frame Change is defined as a substantive change to an outcome's time frame. This may include changes in timing, frequency, etc. This does *not* include removing an outcome completely and adding a different one in its place with a new time frame (i.e., the new outcome is unrelated to the original). This also does not include adding explicit information that was already inferrable; for example, you can always assume that there is a measurement at baseline. Be somewhat lenient with this category—only include substantial changes, and don't include small changes for the purpose of specificity or clarity.
 
 **Addition:**
   Addition is defined as adding a new outcome to the list. This does not include splitting a single outcome into multiple outcomes.
 
 **Removal:**
   Removal is defined as removing an outcome from the list. This does not include combining multiple outcomes into a single outcome.
+
+**Other:**
+  The Other category is for all changes that are not Time Frame Changes, Addition, or Removal. This includes simple changes to the language, spelling, capitalization, or formatting, as well as more contentful changes to the outcomes, such as adding additional or clarifying information, or editing an outcome's metric, analysis, or description.
 
 Here are some example edits and their respective categories:
 
@@ -66,6 +63,8 @@ This edit is a **Removal** because the "Stroop Test TBAG Form" outcome was remov
 ### ANSWER
 Removal
 
+---
+
 ### VERSION 1
 [
   {
@@ -85,10 +84,12 @@ Removal
 ]
 
 ### EXPLANATION
-This edit is **Addition** and **Removal** because the "Body Mass Index Change" outcome was removed and replaced with a different outcome, "School Breakfast Program Participation". This is *not* a **Modification**, because the outcome was completely replaced rather than being modified.
+This edit is **Addition** and **Removal** because the "Body Mass Index Change" outcome was removed and replaced with a different outcome, "School Breakfast Program Participation". This is *not* a **Time Frame Change**, because the outcome was completely replaced rather than being modified.
 
 ### ANSWER
 Addition, Removal
+
+---
 
 ### VERSION 1
 [
@@ -109,10 +110,12 @@ Addition, Removal
 ]
 
 ### EXPLANATION
-This edit is **Elaboration** because the outcome was underspecified in Version 1, and Version 2 changed the "measure" field to be more descriptive and added text to the "description" field. Note that this is *not* **Rewording/Rephrasing** despite the "measure" field changing, since information was added.
+This edit is **Other** because despite clarifying information being added the time frame is still the same and no outcomes were added or removed.
 
 ### ANSWER
-Elaboration
+Other
+
+---
 
 ### VERSION 1
 [
@@ -143,10 +146,12 @@ Elaboration
 ]
 
 ### EXPLANATION
-This edit is **Rewording/Rephrasing** because the abbreviation "(DLT)" was removed from the first outcome measure.
+This edit is **Other** because the only change was the abbreviation "(DLT)" being removed from the first outcome measure. The time frames are the same and no outcomes were added or removed.
 
 ### ANSWER
-Rewording/Rephrasing
+Other
+
+---
 
 ### VERSION 1
 [
@@ -167,10 +172,12 @@ Rewording/Rephrasing
 ]
 
 ### EXPLANATION
-This edit is **Modification** because the quantity being measured has changed from "proportion of participants" to "number of participants". This is **Modification** because the proportion is a fundamentally different metric than the absolute quantity. This edit is also **Rewording/Rephrasing** because the words "that underwent" were replaced with "who experienced", which is a different way of saying the same thing.
+This edit is **Other** because the changes in phrasing (from "proportion of participants" to "number of participants" and from "that underwent" to "who experienced") do not constitute a change to the time frame, and no outcomes were added or removed.
 
 ### ANSWER
-Modification, Rewording/Rephrasing
+Other
+
+---
 
 ### VERSION 1
 [
@@ -191,7 +198,69 @@ Modification, Rewording/Rephrasing
 ]
 
 ### EXPLANATION
-This edit is **Modification** because the time frame has changed from 6 months to 4 months, and the metric has changed from "PART-O" to "CIQ".
+This edit is **Time Frame Change** because the time frame for the outcome has changed from 6 months to 4 months.
 
 ### ANSWER
-Modification
+Time Frame Change
+
+---
+
+### VERSION 1
+[
+  {
+    "measure": "Change from Baseline to Week 12 in Marder negative symptoms factor score (NSFS)",
+    "description": "The Marder negative symptoms factor score (NSFS) derived from the complete Positive and Negative Syndrome Scale (PANSS) has been the most frequently used scale in schizophrenia clinical studies focusing on negative symptoms The PANSS measures comprehensive psychiatric symptoms, including positive, negative, and general symptoms. The full PANSS rates the patient on 30 different symptoms from 1 (absent) to 7 (extreme) based on an interview as well as reports of family members or primary care hospital workers. The NSFS consists of the sum of the negative symptom PANSS items N1, N2, N3, N4, N6, G7, and G16 (minimum score = 7; maximum score = 49). Higher scores indicate more severe symptoms.",
+    "time_frame": "Change from Baseline to Week 12"
+  }
+]
+
+### VERSION 2
+[
+  {
+    "measure": "Change From Baseline to Week 12 in PANSS Marder Negative Symptoms Factor Score (NSFS)",
+    "description": "The Marder negative symptoms factor score (NSFS) derived from the complete Positive and Negative Syndrome Scale (PANSS) has been the most frequently used scale in schizophrenia clinical studies focusing on negative symptoms The PANSS measures comprehensive psychiatric symptoms, including positive, negative, and general symptoms. The full PANSS rates the patient on 30 different symptoms from 1 (absent) to 7 (extreme) based on an interview as well as reports of family members or primary care hospital workers. The NSFS consists of the sum of the negative symptom PANSS items N1, N2, N3, N4, N6, G7, and G16 (minimum score = 7; maximum score = 49). Higher scores indicate more severe symptoms.",
+    "time_frame": "Baseline, Week 2, Week 4, Week 8, and Week 12"
+  }
+]
+
+### EXPLANATION
+This edit is **Time Frame Change** because the time frame for the outcome has been modified to add intermediate measurements at weeks 2, 4, and 8. This is also **Other**, because "PANSS" was added to the outcome measure.
+
+### ANSWER
+Time Frame Change
+
+---
+
+### VERSION 1
+[
+  {
+    "measure": "Number of Disease-Related Hospital Days",
+    "description": null,
+    "time_frame": "Week 24, Week 72"
+  },
+  {
+    "measure": "Number of participants with Occurrences or Recurrence of Status Epilepticus",
+    "description": null,
+    "time_frame": "Week 24, Week 72"
+  },
+]
+
+### VERSION 2
+[
+  {
+    "measure": "Number of Disease-Related Hospital Days",
+    "description": null,
+    "time_frame": "Week 24 and up to Week 72"
+  },
+  {
+    "measure": "Number of participants with Occurrences or Recurrence of Status Epilepticus",
+    "description": null,
+    "time_frame": "Week 24 and up to Week 72"
+  },
+]
+
+### EXPLANATION
+This edit is **Other** because the change from "Week 24, Week 72" to "Week 24 and up to Week 72" is not a significant change to the time frame.
+
+### ANSWER
+Other

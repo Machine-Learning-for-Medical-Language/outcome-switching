@@ -11,9 +11,7 @@ from typing import Final
 import polars as pl
 from inspect_ai.log import read_eval_log_samples
 
-MESH_FILE: Final = Path(__file__).parent / "d2025.bin"
-
-# Utils
+MESH_FILE: Final = Path(__file__).parent / "data" / "mesh" / "d2025.bin"
 
 
 def str_col_to_date(col_name):
@@ -85,231 +83,252 @@ def parse_mesh_hierarchy() -> pl.DataFrame:
     return pl.DataFrame(data).unique()
 
 
-# -- Preprocessing raw data -- #
+class PreprocessingSummary:
+    def __init__(self, total_trials: int):
+        self.total_trials = total_trials
+        self.filters: list[tuple[str, int]] = []
+
+    def add_filter(self, criterion: str, remaining_trials: int):
+        self.filters.append((criterion, remaining_trials))
+
+    def __str__(self):
+        lines = [f"Total trials: {self.total_trials}"]
+        running_total = self.total_trials
+        for criterion, remaining in self.filters:
+            lines.append(
+                f"{criterion}: {remaining} (removed {running_total - remaining})"
+            )
+            running_total = remaining
+        return "\n".join(lines)
 
 
-def preprocess_latest_versions(raw: pl.DataFrame):
-    """Preprocess raw trial data from clinicaltrials.gov of the latest versions of trials
-    for analysis.
+class Preprocessor:
+    def __init__(self, raw_data_dir: str | os.PathLike):
+        self.latest_versions_raw = pl.read_parquet(
+            os.path.join(raw_data_dir, "latest_versions.parquet")
+        )
+        self.version_summaries_raw = pl.read_parquet(
+            os.path.join(raw_data_dir, "version_summaries.parquet")
+        )
+        self.original_versions_raw = pl.read_parquet(
+            os.path.join(raw_data_dir, "original_versions.parquet")
+        )
+        self.summary = PreprocessingSummary(len(self.latest_versions_raw))
 
+    def preprocess_latest_versions(self):
+        """Preprocess raw trial data from clinicaltrials.gov of the latest versions of trials
+        for analysis.
 
-    Args:
-        raw: The raw data to preprocess. The raw data should be a dataframe generated using polars' normalize_json()
-        on a list of JSON records downloaded directly from clinicaltrials.gov.
+        Raises:
+            ValueError: If any trial records don't have an actual start date.
 
-    Raises:
-        ValueError: If any trial records don't have an actual start date.
-
-    Returns:
-        The preprocessed dataframe of trials.
-    """
-    no_actual_start_date = raw.filter(
-        pl.col("protocolSection.statusModule.startDateStruct.type")
-        .is_null()
-        .or_(pl.col("protocolSection.statusModule.startDateStruct.type").ne("ACTUAL"))
-    )
-
-    if no_actual_start_date.shape[0] > 0:
-        raise ValueError(
-            f"{no_actual_start_date.shape[0]} trials don't have an actual start date!"
+        Returns:
+            The preprocessed dataframe of trials.
+        """
+        no_actual_start_date = self.latest_versions_raw.filter(
+            pl.col("protocolSection.statusModule.startDateStruct.type")
+            .is_null()
+            .or_(
+                pl.col("protocolSection.statusModule.startDateStruct.type").ne("ACTUAL")
+            )
         )
 
-    raw_lazy = raw.lazy()
+        if no_actual_start_date.shape[0] > 0:
+            raise ValueError(
+                f"{no_actual_start_date.shape[0]} trials don't have an actual start date!"
+            )
 
-    # Get relevant columns from raw data
-    df = raw_lazy.select(
-        nct_id="protocolSection.identificationModule.nctId",
-        primary_outcomes="protocolSection.outcomesModule.primaryOutcomes",
-        start_date=str_col_to_date("protocolSection.statusModule.startDateStruct.date"),
-        first_submit_date=str_col_to_date(
-            "protocolSection.statusModule.studyFirstSubmitDate"
-        ),
-        last_update_submit_date=str_col_to_date(
-            "protocolSection.statusModule.lastUpdateSubmitDate"
-        ),
-        phases="protocolSection.designModule.phases",
-        lead_sponsor="protocolSection.sponsorCollaboratorsModule.leadSponsor.class",
-        conditions="protocolSection.conditionsModule.conditions",
-        condition_meshes="derivedSection.conditionBrowseModule.meshes",
-        design_allocation="protocolSection.designModule.designInfo.allocation",
-        enrollment_count="protocolSection.designModule.enrollmentInfo.count",
-        enrollment_type="protocolSection.designModule.enrollmentInfo.type",
-        status="protocolSection.statusModule.overallStatus",
-        is_fda_regulated_drug="protocolSection.oversightModule.isFdaRegulatedDrug",
-        is_fda_regulated_device="protocolSection.oversightModule.isFdaRegulatedDevice",
-    )
+        raw = self.latest_versions_raw.lazy()
 
-    # Derived columns
-    df = df.with_columns(
-        submit_delay=pl.col("first_submit_date").sub(pl.col("start_date")),
-        submitted_late=pl.col("first_submit_date")
-        .sub(pl.col("start_date"))
-        .gt(pl.duration(days=21)),
-    )
-
-    # Remove trials registered late
-    df = df.filter(pl.col("submitted_late").eq(False))
-    df = df.drop("submitted_late")
-
-    # Get per-trial intervention types
-    interventions = (
-        raw_lazy.select(
+        # Get relevant columns from raw data
+        df = raw.select(
             nct_id="protocolSection.identificationModule.nctId",
-            interventions="protocolSection.armsInterventionsModule.interventions",
-        )
-        .explode("interventions")
-        .select("nct_id", pl.col("interventions").struct.field("type"))
-        .group_by("nct_id")
-        .agg(intervention_types=pl.col("type").unique().sort())
-    )
-    df = df.join(interventions, on="nct_id")
-
-    # Ignore PROCEDURE and OTHER intervention types
-    df = df.with_columns(
-        intervention_types_filtered=pl.col("intervention_types").list.eval(
-            pl.element().filter(pl.element().is_in(["PROCEDURE", "OTHER"]).not_())
-        )
-    )
-
-    # Remove trials with intervention types starting with BEHAVIORAL or DIETARY_SUPPLEMENT
-    df = df.filter(
-        pl.col("intervention_types_filtered")
-        .list.first()
-        .is_in(["BEHAVIORAL", "DIETARY_SUPPLEMENT"])
-        .not_()
-    )
-
-    # Intervention category is the first InterventionType in the remaining list
-    df = df.with_columns(
-        intervention_category=pl.col("intervention_types_filtered").list.first()
-    ).drop("intervention_types_filtered")
-
-    # Get therapeutic areas from condition mesh IDs
-    df = df.with_columns(pl.col("condition_meshes").fill_null([]))
-    mesh_hierarchy = parse_mesh_hierarchy().lazy().filter(pl.col("level") == 0)
-
-    ignore_categories = (
-        "Animal Diseases",
-        "Chemically-Induced Disorders",
-        "Stomatognathic Diseases",
-        "Pathological Conditions, Signs and Symptoms",
-    )
-
-    mesh_mapping = (
-        df.explode("condition_meshes")
-        .select("nct_id", mesh_id=pl.col("condition_meshes").struct.field("id"))
-        .join(mesh_hierarchy, on="mesh_id")
-        .select("nct_id", pl.col("term_name").alias("therapeutic_areas"))
-        .unique()
-        .filter(pl.col("therapeutic_areas").is_in(ignore_categories).not_())
-    )
-
-    # therapeutic areas in less than 10% of trials will be lumped into "Other" category
-    frequency_cutoff = df.collect().select(pl.len() * 0.10).item()
-
-    infrequent_categories = (
-        mesh_mapping.group_by("therapeutic_areas")
-        .len()
-        .filter(pl.col("len") < frequency_cutoff)
-        .select("therapeutic_areas")
-    )
-
-    mesh_mapping = (
-        mesh_mapping.join(infrequent_categories, on="therapeutic_areas", how="anti")
-        .join(df.select("nct_id"), on="nct_id", how="right")
-        .fill_null("Other")
-        .group_by("nct_id")
-        .agg("therapeutic_areas")
-    )
-
-    df = df.join(mesh_mapping, on="nct_id")
-
-    # Remove nulls
-    def without_nulls(df: pl.DataFrame, allowed_null_cols: list[str]):
-        df = df.with_columns(
-            pl.col("primary_outcomes").fill_null([]),
-            pl.col("design_allocation").fill_null("NA"),
-            # assume it's an estimated value instead of an actual value
-            pl.col("enrollment_type").fill_null("ESTIMATED"),
-            pl.col("is_fda_regulated_drug").fill_null(False),
-            pl.col("is_fda_regulated_device").fill_null(False),
-            # pl.col("therapeutic_area").fill_null("Other"),
+            primary_outcomes="protocolSection.outcomesModule.primaryOutcomes",
+            start_date=str_col_to_date(
+                "protocolSection.statusModule.startDateStruct.date"
+            ),
+            first_submit_date=str_col_to_date(
+                "protocolSection.statusModule.studyFirstSubmitDate"
+            ),
+            last_update_submit_date=str_col_to_date(
+                "protocolSection.statusModule.lastUpdateSubmitDate"
+            ),
+            phases="protocolSection.designModule.phases",
+            lead_sponsor="protocolSection.sponsorCollaboratorsModule.leadSponsor.class",
+            conditions="protocolSection.conditionsModule.conditions",
+            condition_meshes=pl.col(
+                "derivedSection.conditionBrowseModule.meshes"
+            ).fill_null([]),
+            design_allocation="protocolSection.designModule.designInfo.allocation",
+            enrollment_count="protocolSection.designModule.enrollmentInfo.count",
+            enrollment_type="protocolSection.designModule.enrollmentInfo.type",
+            status="protocolSection.statusModule.overallStatus",
+            is_fda_regulated_drug="protocolSection.oversightModule.isFdaRegulatedDrug",
+            is_fda_regulated_device="protocolSection.oversightModule.isFdaRegulatedDevice",
+            intervention_type=(
+                # The intervention type for the trial is the type of the first listed
+                # intervention that is not "PROCEDURE" or "OTHER"
+                pl.col("protocolSection.armsInterventionsModule.interventions")
+                .list.eval(pl.element().struct.field("type"))
+                .list.eval(
+                    pl.element().filter(
+                        pl.element().is_in(["PROCEDURE", "OTHER"]).not_()
+                    )
+                )
+                .list.first()
+            ),
         )
 
-        for col in df.columns:
-            nulls = df.select(col).null_count().item()
-            if nulls > 0 and col not in allowed_null_cols:
-                raise ValueError(f"Column '{col}' has {nulls} null values!")
+        # Remove trials that were not prospectively registered
+        df = df.filter(
+            pl.col("first_submit_date")
+            .sub(pl.col("start_date"))
+            .le(pl.duration(days=21))
+        )
 
+        # Remove trials where the primary intervention type is "BEHAVIORAL" or "DIETARY_SUPPLEMENT",
+        # OR the only listed intervention types are "PROCEDURE" or "OTHER"
+        # (in which case the intervention_type field will be `None` here, since we ignored those above).
+        df = df.filter(
+            pl.col("intervention_type")
+            .is_in(["BEHAVIORAL", "DIETARY_SUPPLEMENT", None])
+            .not_()
+        )
+
+        # Get therapeutic areas from condition mesh IDs
+        mesh_hierarchy = parse_mesh_hierarchy().lazy().filter(pl.col("level") == 0)
+
+        ignore_categories = (
+            "Animal Diseases",
+            "Chemically-Induced Disorders",
+            "Stomatognathic Diseases",
+            "Pathological Conditions, Signs and Symptoms",
+        )
+
+        mesh_mapping = (
+            df.explode("condition_meshes")
+            .select("nct_id", mesh_id=pl.col("condition_meshes").struct.field("id"))
+            .join(mesh_hierarchy, on="mesh_id")
+            .select("nct_id", pl.col("term_name").alias("therapeutic_areas"))
+            .unique()
+            .filter(pl.col("therapeutic_areas").is_in(ignore_categories).not_())
+        )
+
+        # Therapeutic areas in less than 10% of trials will be lumped into "Other" category
+        frequency_cutoff = df.collect().select(pl.len() * 0.10).item()
+
+        infrequent_categories = (
+            mesh_mapping.group_by("therapeutic_areas")
+            .len()
+            .filter(pl.col("len") < frequency_cutoff)
+            .select("therapeutic_areas")
+        )
+
+        mesh_mapping = (
+            mesh_mapping.join(infrequent_categories, on="therapeutic_areas", how="anti")
+            .join(df.select("nct_id"), on="nct_id", how="right")
+            .fill_null("Other")
+            .group_by("nct_id")
+            .agg("therapeutic_areas")
+        )
+
+        df = df.join(mesh_mapping, on="nct_id")
+
+        # Remove nulls
+        def without_nulls(df: pl.DataFrame, allowed_null_cols: list[str]):
+            df = df.with_columns(
+                pl.col("primary_outcomes").fill_null([]),
+                pl.col("design_allocation").fill_null("NA"),
+                # assume it's an estimated value instead of an actual value
+                pl.col("enrollment_type").fill_null("ESTIMATED"),
+                pl.col("is_fda_regulated_drug").fill_null(False),
+                pl.col("is_fda_regulated_device").fill_null(False),
+                # pl.col("therapeutic_area").fill_null("Other"),
+            )
+
+            for col in df.columns:
+                nulls = df.select(col).null_count().item()
+                if nulls > 0 and col not in allowed_null_cols:
+                    raise ValueError(f"Column '{col}' has {nulls} null values!")
+
+            return df
+
+        df = without_nulls(df.collect(), allowed_null_cols=[])
         return df
 
-    df = without_nulls(df.collect(), allowed_null_cols=[])
-    return df
+    def preprocess_version_summaries(self):
+        """Preprocess raw data of trial history summaries from clinicaltrials.gov.
 
+        Args:
+            raw: A dataframe of raw trial history summary data generated with polars'
+            json_normalize() method.
 
-def preprocess_version_summaries(raw: pl.DataFrame):
-    """Preprocess raw data of trial history summaries from clinicaltrials.gov.
-
-    Args:
-        raw: A dataframe of raw trial history summary data generated with polars'
-        json_normalize() method.
-
-    Returns:
-        The preprocessed dataframe of history summaries.
-    """
-    return (
-        raw.explode("changes")
-        .unnest("changes")
-        .select(
-            "nct_id",
-            "version",
-            version_status="status",
-            version_date=str_col_to_date("date"),
-            edited_module_labels="moduleLabels",
-            last_primary_outcome_update_version="lastUpdateVersions.primaryOutcomes",
+        Returns:
+            The preprocessed dataframe of history summaries.
+        """
+        return (
+            self.version_summaries_raw.explode("changes")
+            .unnest("changes")
+            .select(
+                "nct_id",
+                "version",
+                version_status="status",
+                version_date=str_col_to_date("date"),
+                edited_module_labels="moduleLabels",
+                last_primary_outcome_update_version="lastUpdateVersions.primaryOutcomes",
+            )
         )
-    )
+
+    def preprocess_original_versions(self):
+        """Preprocess raw data of trial original versions from clinicaltrials.gov.
+
+        Args:
+            raw: A dataframe of raw trial original version data generated with polars'
+            json_normalize() method.
+
+        Returns:
+            The preprocessed dataframe of original versions.
+        """
+        return (
+            self.original_versions_raw.select(
+                nct_id="study.protocolSection.identificationModule.nctId",
+                version="studyVersion",
+                primary_outcomes="study.protocolSection.outcomesModule.primaryOutcomes",
+            )
+            .group_by("nct_id")
+            .agg(pl.all().sort_by("version", descending=True).first())
+        )
+
+    def preprocess_all(self):
+        return (
+            self.preprocess_latest_versions(),
+            self.preprocess_version_summaries(),
+            self.preprocess_original_versions(),
+        )
 
 
-def preprocess_original_versions(raw: pl.DataFrame):
-    """Preprocess raw data of trial original versions from clinicaltrials.gov.
+# def preprocess_raw_data(raw_data_dir: str):
+#     """Preprocess latest version data, version summary data, and original version data
+#     from a directory of raw data.
 
-    Args:
-        raw: A dataframe of raw trial original version data generated with polars'
-        json_normalize() method.
+#     Args:
+#         raw_data_dir: A path to a directory containing three raw data parquet files:
+#         `latest_versions.parquet`, `version_summaries.parquet`, and `original_versions.parquet`.
 
-    Returns:
-        The preprocessed dataframe of original versions.
-    """
-    return raw.select(
-        nct_id="study.protocolSection.identificationModule.nctId",
-        version="studyVersion",
-        primary_outcomes="study.protocolSection.outcomesModule.primaryOutcomes",
-    )
-
-
-def preprocess_raw_data(raw_data_dir: str):
-    """Preprocess latest version data, version summary data, and original version data
-    from a directory of raw data.
-
-    Args:
-        raw_data_dir: A path to a directory containing three raw data parquet files:
-        `latest_versions.parquet`, `version_summaries.parquet`, and `original_versions.parquet`.
-
-    Returns:
-        A tuple of three dataframes: `(latest_versions, version_summaries, original_versions)`.
-    """
-    return (
-        preprocess_latest_versions(
-            pl.read_parquet(os.path.join(raw_data_dir, "latest_versions.parquet"))
-        ),
-        preprocess_version_summaries(
-            pl.read_parquet(os.path.join(raw_data_dir, "version_summaries.parquet"))
-        ),
-        preprocess_original_versions(
-            pl.read_parquet(os.path.join(raw_data_dir, "original_versions.parquet"))
-        ),
-    )
+#     Returns:
+#         A tuple of three dataframes: `(latest_versions, version_summaries, original_versions)`.
+#     """
+#     return (
+#         preprocess_latest_versions(
+#             pl.read_parquet(os.path.join(raw_data_dir, "latest_versions.parquet"))
+#         ),
+#         preprocess_version_summaries(
+#             pl.read_parquet(os.path.join(raw_data_dir, "version_summaries.parquet"))
+#         ),
+#         preprocess_original_versions(
+#             pl.read_parquet(os.path.join(raw_data_dir, "original_versions.parquet"))
+#         ),
+#     )
 
 
 # -- Find outcome edits for evaluation -- #
@@ -375,6 +394,24 @@ def find_outcome_edits(
     # ensure primary outcomes are different between the two versions
     result = result.filter(
         pl.col("primary_outcomes_before").ne(pl.col("primary_outcomes_after"))
+    )
+
+    def stringified_outcomes_col(col: str):
+        return (
+            pl.col(col)
+            .list.eval(
+                pl.concat_str(
+                    pl.element().struct.unnest(), separator=" ", ignore_nulls=True
+                )
+            )
+            .list.join(" ")
+            .str.replace_all(r"\s+", " ")
+        )
+
+    result = result.filter(
+        stringified_outcomes_col("primary_outcomes_before").ne(
+            stringified_outcomes_col("primary_outcomes_after")
+        )
     )
 
     # execute optimized query

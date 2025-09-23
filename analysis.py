@@ -2,12 +2,16 @@ from datetime import date
 
 import polars as pl
 
-from preprocess import find_outcome_edits, load_model_predictions, preprocess_raw_data
+from preprocess import Preprocessor, find_outcome_edits, load_model_predictions
 
 
 class Analysis:
     def __init__(self, raw_data_dir: str, model_predictions_file: str | None = None):
-        self.latest, self.summaries, self.originals = preprocess_raw_data(raw_data_dir)
+        preprocessor = Preprocessor(raw_data_dir)
+        self.latest = preprocessor.preprocess_latest_versions()
+        self.summaries = preprocessor.preprocess_version_summaries()
+        self.originals = preprocessor.preprocess_original_versions()
+        # self.latest, self.summaries, self.originals = preprocess_raw_data(raw_data_dir)
         self.edits = find_outcome_edits(self.latest, self.summaries, self.originals)
         self.predictions = None
         if model_predictions_file is not None:
