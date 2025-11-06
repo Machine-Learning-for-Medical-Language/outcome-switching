@@ -2,11 +2,12 @@ import json
 from pathlib import Path
 from typing import Final
 
+import polars as pl
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.solver import Generate, TaskState, generate, solver, system_message
 
-from preprocess import Preprocessor, find_outcome_edits
+from preprocess import Preprocessor
 
 PROMPTS_DIR: Final = Path(__file__).parent / "prompts"
 SYSTEM_PROMPT_FILE: Final = PROMPTS_DIR / "system_prompt.txt"
@@ -20,36 +21,36 @@ SCHEMA_CATEGORIES: Final = (
 )
 
 
-def outcome_edits_dataset(
-    raw_data_dir: str,
-    raw_labels_file: str | None = None,
-    nct_ids: set[str] | None = None,
-):
-    """Create a dataset of primary outcome edits for model evaluation.
-
-    Args:
-        raw_data_dir: Path to the raw trial data.
-        raw_labels_file: *Not yet implemented* A file containing true labels for the data. Defaults to None.
-
-    Returns:
-        The dataset for evaluation.
-    """
-
-    if raw_labels_file is not None:
-        raise NotImplementedError("evals with labeled data not yet implemented")
-
+def outcome_edits_dataset(raw_data_file: str):
     with open(USER_PROMPT_TEMPLATE_FILE) as f:
         user_prompt_template = f.read()
 
-    latest, summaries, originals = Preprocessor(raw_data_dir).preprocess_all()
-    outcome_edits = find_outcome_edits(latest, summaries, originals)
-    rows = outcome_edits.rows(named=True)
+    preprocessor = Preprocessor(raw_data_file)
+    preprocessor.apply_filters_for_eval()
+    dataset_df = (
+        preprocessor.df.select(
+            "nct_id",
+            "version",
+            "labels",
+            pl.col("data")
+            .struct.field("study")
+            .struct.field("protocolSection")
+            .struct.field("outcomesModule")
+            .struct.field("primaryOutcomes"),
+        )
+        .explode("labels")
+        .pivot("labels", index="nct_id")
+        .select(
+            "nct_id",
+            version_before="version_prospective",
+            version_after="version_latest",
+            primary_outcomes_before="primaryOutcomes_prospective",
+            primary_outcomes_after="primaryOutcomes_latest",
+        )
+    )
 
     samples: list[Sample] = []
-    for row in rows:
-        if nct_ids is not None and row["nct_id"] not in nct_ids:
-            continue
-
+    for row in dataset_df.rows(named=True):
         samples.append(
             Sample(
                 input=user_prompt_template.format(
@@ -65,7 +66,7 @@ def outcome_edits_dataset(
         )
 
     return MemoryDataset(
-        location=raw_data_dir,
+        location=raw_data_file,
         samples=samples,
     )
 
@@ -102,16 +103,12 @@ def parse_model_response():
 
 
 @task
-def outcome_switching_task(
-    raw_data_dir: str,
-    raw_labels_file: str | None = None,
-    nct_ids: set[str] | None = None,
-):
+def outcome_switching_task(raw_data_file: str):
     with open(SYSTEM_PROMPT_FILE) as f:
         system_prompt = f.read()
 
     return Task(
-        dataset=outcome_edits_dataset(raw_data_dir, raw_labels_file, nct_ids),
+        dataset=outcome_edits_dataset(raw_data_file),
         solver=[
             # workaround for weird formatting behavior with JSON examples in prompt
             system_message("{system_prompt}", system_prompt=system_prompt),
