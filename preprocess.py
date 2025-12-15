@@ -1,11 +1,10 @@
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import ClassVar
 
 import polars as pl
 
-from utils import parse_mesh_hierarchy, str_to_date
+from utils import DerivedFields
 
 
 def _count_trials(df: pl.DataFrame):
@@ -22,102 +21,6 @@ class Filter:
         return (
             f"{self.before} → {self.after} (-{self.before - self.after}): {self.desc}"
         )
-
-
-def _mesh_ids_to_therapeutic_areas(mesh_ids_col: pl.Expr):
-    ignore_categories = (
-        "Animal Diseases",
-        "Chemically-Induced Disorders",
-        "Stomatognathic Diseases",
-        "Pathological Conditions, Signs and Symptoms",
-    )
-
-    base_mesh_terms = dict(
-        parse_mesh_hierarchy()
-        .filter(pl.col("level") == 0)
-        .filter(pl.col("term_name").is_in(ignore_categories).not_())
-        .select("mesh_id", "term_name")
-        .rows()
-    )
-
-    return mesh_ids_col.list.eval(
-        pl.element()
-        .filter(pl.element().is_in(base_mesh_terms))
-        .replace(base_mesh_terms)
-    ).list.unique()
-
-
-class DerivedFields:
-    # protocolSection.statusModule.startDateStruct.date
-    start_date: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("protocolSection")
-        .struct.field("statusModule")
-        .struct.field("startDateStruct")
-        .struct.field("date")
-        .pipe(str_to_date)
-        .alias("start_date")
-    )
-
-    # Extract the first listed intervention type that is not "PROCEDURE" or "OTHER".
-    primary_intervention_type: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("protocolSection")
-        .struct.field("armsInterventionsModule")
-        .struct.field("interventions")
-        .list.eval(pl.element().struct.field("type"))
-        .list.eval(
-            pl.element().filter(pl.element().is_in(["PROCEDURE", "OTHER"]).not_())
-        )
-        .list.first()
-        .alias("primary_intervention_type")
-    )
-
-    # List of MeSH IDs for all condition MeSH terms associated with the trial.
-    therapeutic_areas: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("derivedSection")
-        .struct.field("conditionBrowseModule")
-        .struct.field("meshes")
-        .fill_null([])
-        .list.eval(pl.element().struct.field("id"))
-        .pipe(_mesh_ids_to_therapeutic_areas)
-        .alias("therapeutic_areas")
-    )
-
-    # e.g., whether the trial is randomized
-    design_allocation: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("protocolSection")
-        .struct.field("designModule")
-        .struct.field("designInfo")
-        .struct.field("allocation")
-        .alias("design_allocation")
-    )
-
-    lead_sponsor: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("protocolSection")
-        .struct.field("sponsorCollaboratorsModule")
-        .struct.field("leadSponsor")
-        .struct.field("class")
-        .alias("lead_sponsor")
-    )
-
-    enrollment_count: ClassVar[pl.Expr] = (
-        pl.col("data")
-        .struct.field("study")
-        .struct.field("protocolSection")
-        .struct.field("designModule")
-        .struct.field("enrollmentInfo")
-        .struct.field("count")
-        .alias("enrollment_count")
-    )
 
 
 class Preprocessor:

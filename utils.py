@@ -2,7 +2,7 @@ import os
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Final
+from typing import ClassVar, Final, NamedTuple, Self
 
 import numpy as np
 import polars as pl
@@ -67,6 +67,79 @@ def load_model_predictions(
         return pl.DataFrame(iter_samples())
 
 
+class EvalResult(NamedTuple):
+    tp: int
+    tn: int
+    fp: int
+    fn: int
+
+    @property
+    def tpr(self):
+        return self.tp / (self.tp + self.fn)
+
+    @property
+    def fnr(self):
+        return self.fn / (self.tp + self.fn)
+
+    @property
+    def N(self):
+        return self.tp + self.tn + self.fp + self.fn
+
+    def p_gold(self, gold: bool):
+        if gold:
+            return (self.tp + self.fn) / self.N
+        else:
+            return (self.fp + self.tn) / self.N
+
+    def p_pred(self, pred: bool):
+        if pred:
+            return (self.tp + self.fp) / self.N
+        else:
+            return (self.tn + self.fn) / self.N
+
+    def p_gold_given_pred(self, gold: bool, pred: bool):
+        if pred:
+            # P(gold=1|pred=1) = P(pred=1|gold=1) * P(gold=1) / P(pred=1)
+            p = self.tpr * self.p_gold(True) / self.p_pred(True)
+        else:
+            # P(gold=1|pred=0) = P(pred=0|gold=1) * P(gold=1) / P(pred=0)
+            p = self.fnr * self.p_gold(True) / self.p_pred(False)
+
+        if not gold:
+            p = 1 - p
+
+        return p
+
+    @classmethod
+    def p_at_least_one_gold(
+        cls, eval_results: list[Self], predicted_labels: list[bool]
+    ):
+        p_no_gold = 1.0
+        for eval_result, pred in zip(eval_results, predicted_labels, strict=True):
+            p_no_gold *= eval_result.p_gold_given_pred(gold=False, pred=pred)
+        return 1 - p_no_gold
+
+
+def pred_weights(tp: int, tn: int, fp: int, fn: int) -> tuple[float, float]:
+    N = tp + tn + fp + fn
+
+    model_tpr = tp / (tp + fn)  # P(pred=1|gold=1)
+    model_fnr = fn / (tp + fn)  # P(pred=0|gold=1)
+    p_gold_pos = (tp + fn) / N  # P(gold=1)
+    p_pred_pos = (tp + fp) / N  # P(pred=1)
+    p_pred_neg = (tn + fn) / N  # P(pred=0)
+
+    # Confidence in model predicting positive label:
+    # P(gold=1|pred=1) = P(pred=1|gold=1) * P(gold=1) / P(pred=1)
+    pos_pred_weight = model_tpr * p_gold_pos / p_pred_pos
+
+    # Confidence in model predicting negative label:
+    # P(gold=0|pred=0) = 1 - P(gold=1|pred=0) = 1 - [P(pred=0|gold=1) * P(gold=1) / P(pred=0)]
+    neg_pred_weight = 1 - (model_fnr * p_gold_pos / p_pred_neg)
+
+    return pos_pred_weight, neg_pred_weight
+
+
 def simulate_gold_labels(
     predictions: list[bool],
     eval_tp: int,
@@ -98,28 +171,18 @@ def simulate_gold_labels(
 
     rng = np.random.default_rng(random_state)
 
-    n_eval = eval_tp + eval_tn + eval_fp + eval_fn
-
-    # There is uncertainty in these variables, so we could
-    # instead sample different values for each iteration.
-    model_tpr = eval_tp / (eval_tp + eval_fn)  # P(pred=1|gold=1)
-    model_fnr = eval_fn / (eval_tp + eval_fn)  # P(pred=0|gold=1)
-    p_gold_pos = (eval_tp + eval_fn) / n_eval  # P(gold=1)
-    p_pred_pos = (eval_tp + eval_fp) / n_eval  # P(pred=1)
-    p_pred_neg = (eval_tn + eval_fn) / n_eval  # P(pred=0)
-
     preds_arr = np.array(predictions, dtype=bool)
+
+    pos_pred_weight, neg_pred_weight = pred_weights(eval_tp, eval_tn, eval_fp, eval_fn)
 
     simulations: list[list[bool]] = []
     for _ in range(n_simulations):
         p_gold_given_pred = np.where(
             preds_arr,
-            # If model predicted True for this sample:
-            # P(gold=1|pred=1) = P(pred=1|gold=1) * P(gold=1) / P(pred=1)
-            model_tpr * p_gold_pos / p_pred_pos,
-            # If model predicted False for this sample:
-            # P(gold=1|pred=0) = P(pred=0|gold=1) * P(gold=1) / P(pred=0)
-            model_fnr * p_gold_pos / p_pred_neg,
+            # model predicted True for this sample
+            pos_pred_weight,
+            # model predicted False for this sample
+            1 - neg_pred_weight,
         )
 
         simulations.append(rng.random(len(preds_arr)) < p_gold_given_pred)
@@ -161,15 +224,118 @@ def parse_mesh_hierarchy() -> pl.DataFrame:
         for tree_id in tree_ids:
             name_map[tree_id] = name
 
-    data = {"mesh_id": [], "term_name": [], "level": []}
+    data = {"mesh_id": [], "term_name": [], "level": [], "tree_id": []}
     for mesh_id, tree_ids in tree_map.items():
         for tree_id in tree_ids:
-            if tree_id.startswith("C"):  # conditions only
+            if (
+                tree_id.startswith("C")  # diseases
+                or tree_id.startswith("F")  # psychiatry and psychology
+            ):
                 for level in range(len(tree_id.split("."))):
                     data["mesh_id"].append(mesh_id)
                     data["term_name"].append(
                         name_map[".".join(tree_id.split(".")[: level + 1])]
                     )
                     data["level"].append(level)
+                    data["tree_id"].append(tree_id)
 
     return pl.DataFrame(data).unique()
+
+
+def _mesh_ids_to_therapeutic_areas(
+    mesh_ids_col: pl.Expr,
+):
+    base_mesh_terms = (
+        parse_mesh_hierarchy()
+        .filter(pl.col("level") == 0)
+        .select("mesh_id", "term_name")
+        .rows()
+    )
+    mapping: dict[str, list[str]] = {}
+    for mesh_id, term_name in base_mesh_terms:
+        if mesh_id not in mapping:
+            mapping[mesh_id] = []
+        mapping[mesh_id].append(term_name)
+
+    return (
+        mesh_ids_col.list.filter(pl.element().is_in(mapping))
+        .list.eval(
+            pl.element()
+            .replace_strict(mapping, return_dtype=pl.List(pl.String))
+            .flatten()
+        )
+        .list.unique()
+    )
+
+
+class DerivedFields:
+    # protocolSection.statusModule.startDateStruct.date
+    start_date: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("protocolSection")
+        .struct.field("statusModule")
+        .struct.field("startDateStruct")
+        .struct.field("date")
+        .pipe(str_to_date)
+        .alias("start_date")
+    )
+
+    # Extract the first listed intervention type that is not "PROCEDURE" or "OTHER".
+    primary_intervention_type: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("protocolSection")
+        .struct.field("armsInterventionsModule")
+        .struct.field("interventions")
+        .list.eval(pl.element().struct.field("type"))
+        .list.eval(
+            pl.element().filter(pl.element().is_in(["PROCEDURE", "OTHER"]).not_())
+        )
+        .list.first()
+        .alias("primary_intervention_type")
+    )
+
+    # List of MeSH IDs for all condition MeSH terms associated with the trial.
+    therapeutic_areas: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("derivedSection")
+        .struct.field("conditionBrowseModule")
+        .struct.field("meshes")
+        .fill_null([])
+        .list.eval(pl.element().struct.field("id"))
+        .pipe(_mesh_ids_to_therapeutic_areas)
+        .alias("therapeutic_areas")
+    )
+
+    # e.g., whether the trial is randomized
+    design_allocation: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("protocolSection")
+        .struct.field("designModule")
+        .struct.field("designInfo")
+        .struct.field("allocation")
+        .alias("design_allocation")
+    )
+
+    lead_sponsor: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("protocolSection")
+        .struct.field("sponsorCollaboratorsModule")
+        .struct.field("leadSponsor")
+        .struct.field("class")
+        .alias("lead_sponsor")
+    )
+
+    enrollment_count: ClassVar[pl.Expr] = (
+        pl.col("data")
+        .struct.field("study")
+        .struct.field("protocolSection")
+        .struct.field("designModule")
+        .struct.field("enrollmentInfo")
+        .struct.field("count")
+        .alias("enrollment_count")
+    )
