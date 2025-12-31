@@ -1,5 +1,4 @@
 import hashlib
-import os
 from pathlib import Path
 from typing import Literal
 
@@ -13,9 +12,9 @@ from utils import DerivedFields, EvalResult, console, load_model_predictions
 class Postprocessor:
     def __init__(
         self,
-        trials_data_path: str | os.PathLike,
-        model_eval_log: str | os.PathLike,
-        cache_dir: str | os.PathLike,
+        trials_data_path: str | Path,
+        model_eval_log: str | Path,
+        cache_dir: str | Path,
     ):
         def prepare_df():
             with console.status("Filtering trials..."):
@@ -25,8 +24,8 @@ class Postprocessor:
             model_predictions = load_model_predictions(
                 model_eval_log, cache_dir=cache_dir
             )
-
-            latest = (
+            import typing
+            latest = typing.cast( pl.DataFrame,
                 preprocessor.latest_versions()
                 .rename({"version": "version_after"})
                 .join(
@@ -71,6 +70,26 @@ class Postprocessor:
                 )
             )
 
+            infrequent_primary_intervention_types = (
+                df.select(
+                    pl.col("primary_intervention_type")
+                    .value_counts(sort=True)
+                    .struct.unnest()
+                )
+                .drop_nulls()
+                .filter(pl.col("count") < (len(df) * 0.05))["primary_intervention_type"]
+            )
+
+            df = df.with_columns(
+                primary_intervention_type=pl.when(
+                    pl.col("primary_intervention_type").is_in(
+                        infrequent_primary_intervention_types
+                    )
+                )
+                .then(pl.lit("Other"))
+                .otherwise("primary_intervention_type")
+            )
+
             infrequent_therapeutic_areas = (
                 df.select(
                     pl.col("therapeutic_areas")
@@ -89,12 +108,16 @@ class Postprocessor:
             )
 
             df = df.with_columns(
-                relevant_therapeutic_areas=pl.col("therapeutic_areas").list.eval(
-                    pl.element().filter(
-                        (
-                            pl.element().is_in(infrequent_therapeutic_areas)
-                            | pl.element().is_in(uninformative_therapeutic_areas)
-                        ).not_()
+                relevant_therapeutic_areas=pl.when(pl.col("therapeutic_areas").eq([]))
+                .then(pl.lit(["Unknown"]))
+                .otherwise(
+                    pl.col("therapeutic_areas").list.eval(
+                        pl.element().filter(
+                            (
+                                pl.element().is_in(infrequent_therapeutic_areas)
+                                | pl.element().is_in(uninformative_therapeutic_areas)
+                            ).not_()
+                        )
                     )
                 )
             ).with_columns(
@@ -160,9 +183,9 @@ class Postprocessor:
 
         N = len(self.df)
         fmt_count_expr = pl.format(
-            f"{{}}/{N:,} ({{}}%)",
+            f"{{}}/{N:,} ({{}})",
             pl.col("count").map_elements(lambda x: f"{x:,}"),
-            (pl.col("count") * 100 / N).round(2),
+            (pl.col("count") / N).map_elements(lambda x: f"{x:.2%}"),
         ).alias("count")
 
         start_years = (
@@ -187,7 +210,10 @@ class Postprocessor:
             .explode()
             .value_counts()
             .sort(
-                pl.col("therapeutic_areas") != "Other", pl.col("count"), descending=True
+                pl.col("therapeutic_areas") != "Unknown",
+                pl.col("therapeutic_areas") != "Other",
+                pl.col("count"),
+                descending=True,
             )
             .select(label="therapeutic_areas", count=fmt_count_expr)
         )
@@ -273,7 +299,7 @@ class Postprocessor:
             self.df.select("addition", "removal", "tf_change")
             .map_rows(
                 lambda row: EvalResult.p_at_least_one_gold(
-                    [eval_results[cat] for cat in ["addition", "removal", "tf_change"]],
+                    [eval_results[cat] for cat in ("addition", "removal", "tf_change")],
                     row,
                 )
             )["map"]
@@ -295,8 +321,8 @@ class Postprocessor:
     ):
         def get_any_change_prob(struct):
             return EvalResult.p_at_least_one_gold(
-                [eval_results[cat] for cat in ["addition", "removal", "tf_change"]],
-                [struct[cat] for cat in ["addition", "removal", "tf_change"]],
+                [eval_results[cat] for cat in ("addition", "removal", "tf_change")],
+                [struct[cat] for cat in ("addition", "removal", "tf_change")],
             )
 
         return (
@@ -310,7 +336,7 @@ class Postprocessor:
                         .otherwise(eval_results[cat].p_gold_given_pred(False, False))
                     )
                     .alias(f"{cat}_weight")
-                    for cat in ["addition", "removal", "tf_change"]
+                    for cat in ("addition", "removal", "tf_change")
                 ]
             )
             .with_columns(
@@ -320,7 +346,7 @@ class Postprocessor:
                     pl.struct("addition", "removal", "tf_change").map_elements(
                         get_any_change_prob,
                         skip_nulls=True,
-                        return_dtype=float,
+                        return_dtype=pl.Float32,
                     )
                 ),
             )

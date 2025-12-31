@@ -7,7 +7,7 @@ import polars as pl
 from utils import DerivedFields
 
 
-def _count_trials(df: pl.DataFrame):
+def _count_trials(df: pl.DataFrame) -> int:
     return len(df["nct_id"].unique())
 
 
@@ -25,8 +25,8 @@ class Filter:
 
 class Preprocessor:
     def __init__(self, raw_data_file: str | os.PathLike):
-        self.raw_df = pl.read_parquet(raw_data_file)
-        self.df = self.raw_df
+        self.raw_df: pl.DataFrame = pl.read_parquet(raw_data_file)
+        self.df: pl.DataFrame = self.raw_df
         self.filters: list[Filter] = []
 
     def reset(self):

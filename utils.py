@@ -1,10 +1,8 @@
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import ClassVar, Final, NamedTuple, Self
 
-import numpy as np
 import polars as pl
 from inspect_ai.log import read_eval_log, read_eval_log_samples
 from rich.console import Console
@@ -28,8 +26,8 @@ def str_to_date(expr: pl.Expr):
 
 
 def load_model_predictions(
-    eval_log_file: str | os.PathLike,
-    cache_dir: str | os.PathLike | None = None,
+    eval_log_file: str | Path,
+    cache_dir: str | Path | None = None,
 ):
     def iter_samples():
         iterator = read_eval_log_samples(
@@ -39,8 +37,9 @@ def load_model_predictions(
         total_samples = read_eval_log(
             eval_log_file, header_only=True
         ).eval.dataset.samples
-
-        if total_samples > 500:
+        if total_samples is None:
+            raise ValueError("no samples found in eval log file")
+        elif total_samples > 500:
             iterator = track(
                 iterator,
                 total=total_samples,
@@ -114,80 +113,21 @@ class EvalResult(NamedTuple):
     def p_at_least_one_gold(
         cls, eval_results: list[Self], predicted_labels: list[bool]
     ):
+        """Calculate the probability that the gold label is `True` for at least one category.
+
+        Args:
+            eval_results: A list of `EvalResult` objects, one for each category.
+            predicted_labels: A list of predicted labels, one for each category.
+
+        Returns:
+            The probability that the gold label for at least one of the categories is `True`.
+        """
+        # use p_gold_given_pred to calculate the probability that
+        # NONE of the gold labels are True, then subtract from 1
         p_no_gold = 1.0
         for eval_result, pred in zip(eval_results, predicted_labels, strict=True):
             p_no_gold *= eval_result.p_gold_given_pred(gold=False, pred=pred)
         return 1 - p_no_gold
-
-
-def pred_weights(tp: int, tn: int, fp: int, fn: int) -> tuple[float, float]:
-    N = tp + tn + fp + fn
-
-    model_tpr = tp / (tp + fn)  # P(pred=1|gold=1)
-    model_fnr = fn / (tp + fn)  # P(pred=0|gold=1)
-    p_gold_pos = (tp + fn) / N  # P(gold=1)
-    p_pred_pos = (tp + fp) / N  # P(pred=1)
-    p_pred_neg = (tn + fn) / N  # P(pred=0)
-
-    # Confidence in model predicting positive label:
-    # P(gold=1|pred=1) = P(pred=1|gold=1) * P(gold=1) / P(pred=1)
-    pos_pred_weight = model_tpr * p_gold_pos / p_pred_pos
-
-    # Confidence in model predicting negative label:
-    # P(gold=0|pred=0) = 1 - P(gold=1|pred=0) = 1 - [P(pred=0|gold=1) * P(gold=1) / P(pred=0)]
-    neg_pred_weight = 1 - (model_fnr * p_gold_pos / p_pred_neg)
-
-    return pos_pred_weight, neg_pred_weight
-
-
-def simulate_gold_labels(
-    predictions: list[bool],
-    eval_tp: int,
-    eval_tn: int,
-    eval_fp: int,
-    eval_fn: int,
-    n_simulations=1000,
-    random_state=None,
-):
-    """
-    Given a list of model predictions on target data and the model's performance
-    statistics on an evaluation set, sample plausible gold labels for the target data.
-
-    This function assumes that the evaluation data and the new data are drawn from the
-    same distribution.
-
-    Args:
-        predictions: A binary list of the model's predictions on new data.
-        eval_tp: The number of true positive labels by the model on the evaluation data.
-        eval_tn: The number of true negative labels by the model on the evaluation data.
-        eval_fp: The number of false positive labels by the model on the evaluation data.
-        eval_fn: The number of false negative labels by the model on the evaluation data.
-        n_simulations: How many lists of sampled gold labels to return. Defaults to 20000.
-        random_state: Starting state for the random number generator. Defaults to None.
-
-    Returns:
-        A boolean ndarray with shape `(n_simulations, len(predictions))`
-    """
-
-    rng = np.random.default_rng(random_state)
-
-    preds_arr = np.array(predictions, dtype=bool)
-
-    pos_pred_weight, neg_pred_weight = pred_weights(eval_tp, eval_tn, eval_fp, eval_fn)
-
-    simulations: list[list[bool]] = []
-    for _ in range(n_simulations):
-        p_gold_given_pred = np.where(
-            preds_arr,
-            # model predicted True for this sample
-            pos_pred_weight,
-            # model predicted False for this sample
-            1 - neg_pred_weight,
-        )
-
-        simulations.append(rng.random(len(preds_arr)) < p_gold_given_pred)
-
-    return np.array(simulations)
 
 
 def parse_mesh_hierarchy() -> pl.DataFrame:
