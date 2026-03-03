@@ -46,7 +46,7 @@ class Preprocessor:
             + [f"  {f}" for f in self.filters]
         )
 
-    def latest_versions(self):
+    def latest_versions(self) -> pl.DataFrame:
         return self.df.filter(pl.col("labels").list.contains("latest"))
 
     def prospective_versions(self):
@@ -83,7 +83,7 @@ class Preprocessor:
     def filter_intervention_type(self):
         """
         Remove trials where the primary intervention type is "BEHAVIORAL",
-        "DIETARY_SUPPLEMENT", or "RADIATION". Also remove trials without a primary intervention type.
+        "DIAGNOSTIC_TEST", "DIETARY_SUPPLEMENT", or "RADIATION". Also remove trials without a primary intervention type.
         The primary intervention type is the first intervention type listed that is
         not "PROCEDURE" or "OTHER".
 
@@ -97,7 +97,15 @@ class Preprocessor:
             .select("nct_id", DerivedFields.primary_intervention_type)
             .filter(
                 pl.col("primary_intervention_type")
-                .is_in(["BEHAVIORAL", "DIETARY_SUPPLEMENT", "RADIATION", None])
+                .is_in(
+                    [
+                        "BEHAVIORAL",
+                        "DIAGNOSTIC_TEST",
+                        "DIETARY_SUPPLEMENT",
+                        "RADIATION",
+                        None,
+                    ]
+                )
                 .not_()
             )
             .select("nct_id")
