@@ -1,13 +1,18 @@
 import hashlib
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import numpy as np
 import polars as pl
 import polars.selectors as cs
 
 from preprocess import Preprocessor
-from utils import DerivedFields, EvalResult, console, load_model_predictions
+from utils import (
+    DerivedFields,
+    ObservedEvalPerformance,
+    console,
+    load_model_predictions,
+)
 
 
 class Postprocessor:
@@ -16,8 +21,12 @@ class Postprocessor:
         trials_data_path: str | Path,
         model_eval_log: str | Path,
         cache_dir: str | Path | None,
-        eval_results: dict[Literal["addition", "removal", "tf_change"], EvalResult],
-        n_simulations: int = 1000,
+        eval_results: dict[
+            Literal["addition", "removal", "tf_change"], ObservedEvalPerformance
+        ],
+        refresh_cache: bool = False,
+        n_simulations: int = 100,
+        per_rate_samples: int = 100,
         random_state=None,
     ):
         def prepare_df() -> pl.DataFrame:
@@ -28,10 +37,8 @@ class Postprocessor:
             model_predictions = load_model_predictions(
                 model_eval_log, cache_dir=cache_dir
             )
-            import typing
 
-            latest = typing.cast(
-                pl.DataFrame,
+            latest = (
                 preprocessor.latest_versions()
                 .rename({"version": "version_after"})
                 .join(
@@ -39,7 +46,7 @@ class Postprocessor:
                         "nct_id", version_before="version"
                     ),
                     on="nct_id",
-                ),
+                )
             )
 
             df = (
@@ -135,7 +142,7 @@ class Postprocessor:
             )
 
             df = self._simulate_true_labels(
-                df, eval_results, n_simulations, random_state
+                df, eval_results, n_simulations, per_rate_samples, random_state
             )
 
             return df
@@ -145,8 +152,8 @@ class Postprocessor:
                 Path(cache_dir)
                 / f"postprocess-{hashlib.sha256((str(trials_data_path) + str(model_eval_log)).encode()).hexdigest()}.parquet"
             )
-            if cache_file.exists():
-                self.df = cast(pl.DataFrame, pl.read_parquet(cache_file))
+            if cache_file.exists() and not refresh_cache:
+                self.df = pl.read_parquet(cache_file)
             else:
                 df = prepare_df()
                 df.write_parquet(cache_file)
@@ -223,16 +230,8 @@ class Postprocessor:
                 new_col["modifications"].append(modifications)
             return df.join(pl.DataFrame(new_col), on="label").with_columns(
                 modifications=pl.format(
-                    "{} ({}) [{}–{}]",
+                    "{} ({}, {}–{})",
                     pl.col("modifications").struct.field("estimate").cast(pl.Int32),
-                    # pl.col("modifications")
-                    # .struct.field("ci")
-                    # .struct.field("lower")
-                    # .cast(pl.Int32),
-                    # pl.col("modifications")
-                    # .struct.field("ci")
-                    # .struct.field("upper")
-                    # .cast(pl.Int32),
                     pl.col("modifications").struct.field("pct").round(2),
                     pl.col("modifications")
                     .struct.field("pct_ci")
@@ -318,7 +317,7 @@ class Postprocessor:
                 {
                     "label": "",
                     "count": f"Total trials, N (%) (N={N})",
-                    "modifications": "Trials with primary outcome modification, N (row %) [95% CI]",
+                    "modifications": "Trials with primary outcome modification, N (row %, 95% CI)",
                 }
             ]
         )
@@ -340,58 +339,59 @@ class Postprocessor:
     @staticmethod
     def _simulate_true_labels(
         df: pl.DataFrame,
-        eval_results: dict[Literal["addition", "removal", "tf_change"], EvalResult],
-        n_simulations: int = 1000,
+        eval_results: dict[
+            Literal["addition", "removal", "tf_change"], ObservedEvalPerformance
+        ],
+        n_simulations: int = 100,
+        per_rate_samples: int = 100,
         random_state=None,
     ) -> pl.DataFrame:
         rng = np.random.default_rng(random_state)
         result = df
 
-        mask = df["addition"].to_numpy() != None  # noqa: E711
-
-        def simulate(category_title: str, p_gold_given_pred: np.ndarray) -> pl.Series:
-            simulations = np.array(
-                [
-                    np.where(
-                        mask,
-                        rng.random(len(p_gold_given_pred)) < p_gold_given_pred,
-                        False,
-                    )
-                    for _ in range(n_simulations)
-                ]
-            ).T  # transpose to (trials, simulations)
-            return pl.Series(
-                name=f"{category_title}_simulations",
-                values=simulations,
-                dtype=pl.Array(pl.Boolean, n_simulations),
-            )
+        # Trials without values in the "addition", "removal", or "tf_change" columns
+        # were never sent to the model because no edits were made to the trial registrations.
+        # For these trials, we must always sample False as the true label, because we know
+        # for sure that no change was made!
+        known_false_mask = df["addition"].to_numpy() == None  # noqa: E711
 
         for category, eval_result in eval_results.items():
             result = result.with_columns(
-                simulate(
-                    category,
-                    np.where(
-                        df[category].to_numpy().astype(bool),
-                        eval_result.p_gold_given_pred(True, True),
-                        eval_result.p_gold_given_pred(True, False),
-                    ),
+                pl.Series(
+                    name=f"{category}_simulations",
+                    values=np.where(
+                        known_false_mask,
+                        0,
+                        eval_result.sample_true_labels(
+                            predictions=df[category].to_numpy().astype(bool),  # ty:ignore[invalid-argument-type]
+                            n_samples=n_simulations,
+                            per_rate_samples=per_rate_samples,
+                            prior_alpha=(1.0, 1.0, 1.0, 1.0),
+                            rng=rng,
+                        ),
+                    ).T,  # transpose to (trials, simulations)
+                    dtype=pl.Array(pl.Boolean, n_simulations * per_rate_samples),
                 )
             )
 
         result = result.with_columns(
-            simulate(
-                "any_change",
-                df.select("addition", "removal", "tf_change")
-                .map_rows(
-                    lambda row: EvalResult.p_at_least_one_gold(
-                        [
-                            eval_results[cat]
-                            for cat in ("addition", "removal", "tf_change")
-                        ],
-                        row,
-                    )
-                )["map"]
-                .to_numpy(),
+            pl.Series(
+                name="any_change_simulations",
+                values=np.where(
+                    known_false_mask,
+                    0,
+                    eval_result.sample_at_least_one_true_labels(
+                        eval_perfs_and_predictions=[
+                            (eval_result, df[category].to_numpy().astype(bool))
+                            for category, eval_result in eval_results.items()
+                        ],  # ty:ignore[invalid-argument-type]
+                        n_samples=n_simulations,
+                        per_rate_samples=per_rate_samples,
+                        prior_alpha=(1.0, 1.0, 1.0, 1.0),
+                        rng=rng,
+                    ),
+                ).T,  # transpose to (trials, simulations)
+                dtype=pl.Array(pl.Boolean, n_simulations * per_rate_samples),
             )
         )
 
@@ -399,9 +399,43 @@ class Postprocessor:
 
     @staticmethod
     def estimate_change_prevalences(filtered_df: pl.DataFrame) -> pl.DataFrame:
+        sim_data = filtered_df.select(cs.ends_with("_simulations"))
+        simulated_prevalences = pl.DataFrame(
+            pl.Series(
+                name=c.removesuffix("_simulations"),
+                values=np.array(sim_data[c]).sum(axis=0),
+            )
+            for c in sim_data.columns
+        )
+        return (
+            simulated_prevalences.unpivot(
+                variable_name="change_type", value_name="simulations"
+            )
+            .group_by("change_type")
+            .agg(
+                estimate=pl.median("simulations"),
+                ci=pl.struct(
+                    lower=pl.quantile("simulations", 0.025),
+                    upper=pl.quantile("simulations", 0.975),
+                ),
+            )
+            .with_columns(
+                pct=pl.col("estimate") * 100 / pl.lit(len(filtered_df)),
+                pct_ci=pl.struct(
+                    lower=pl.col("ci").struct.field("lower")
+                    * 100
+                    / pl.lit(len(filtered_df)),
+                    upper=pl.col("ci").struct.field("upper")
+                    * 100
+                    / pl.lit(len(filtered_df)),
+                ),
+            )
+        )
+
         def vertical_sum(series: pl.Series):
             arr_len = series.arr.len().item(0)
-            return pl.concat_arr(series.arr.get(i).sum() for i in range(arr_len))
+            res = pl.concat_arr(series.arr.get(i).sum() for i in range(arr_len))
+            return res
 
         return (
             filtered_df.select(cs.ends_with("_simulations"))
@@ -435,48 +469,21 @@ class Postprocessor:
             )
         )
 
-    def multivariate_analysis_table(
-        self,
-        eval_results: dict[Literal["addition", "removal", "tf_change"], EvalResult],
-    ):
-        def get_any_change_prob(struct):
-            return EvalResult.p_at_least_one_gold(
-                [eval_results[cat] for cat in ("addition", "removal", "tf_change")],
-                [struct[cat] for cat in ("addition", "removal", "tf_change")],
-            )
-
+    def multivariate_analysis_table(self):
         return (
-            self.df.drop(cs.ends_with("_simulations"))
-            .with_columns(
+            self.df.with_columns(
                 [
                     pl.when(pl.col(cat).is_null())
                     .then(1)
                     .otherwise(
                         pl.when(pl.col(cat))
-                        .then(eval_results[cat].p_gold_given_pred(True, True))
-                        .otherwise(eval_results[cat].p_gold_given_pred(False, False))
+                        .then(pl.col(f"{cat}_simulations").arr.mean())
+                        .otherwise(1 - pl.col(f"{cat}_simulations").arr.mean())
                     )
                     .alias(f"{cat}_weight")
-                    for cat in ("addition", "removal", "tf_change")
+                    for cat in ("addition", "removal", "tf_change", "any_change")
                 ]
             )
-            .with_columns(
-                any_change_prob=pl.when(pl.col("any_change").is_null())
-                .then(0)
-                .otherwise(
-                    pl.struct("addition", "removal", "tf_change").map_elements(
-                        get_any_change_prob,
-                        skip_nulls=True,
-                        return_dtype=pl.Float32,
-                    )
-                ),
-            )
-            .with_columns(
-                any_change_weight=pl.when(pl.col("any_change"))
-                .then(pl.col("any_change_prob"))
-                .otherwise(pl.lit(1).sub(pl.col("any_change_prob")))
-            )
-            .drop("any_change_prob")
             .with_columns(
                 pl.col("addition").fill_null(False),
                 pl.col("removal").fill_null(False),
@@ -490,6 +497,7 @@ class Postprocessor:
                 therapeutic_areas="relevant_therapeutic_areas",
             )
             .drop(
+                cs.ends_with("_simulations"),
                 "data",
                 "retrieved",
                 "model_prediction",

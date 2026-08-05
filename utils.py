@@ -1,8 +1,11 @@
 import re
 from collections import defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Final, NamedTuple, Self
+from typing import ClassVar, Final, Self
 
+import numpy as np
 import polars as pl
 from inspect_ai.log import read_eval_log, read_eval_log_samples
 from rich.console import Console
@@ -66,37 +69,137 @@ def load_model_predictions(
         return pl.DataFrame(iter_samples())
 
 
-class EvalResult(NamedTuple):
+@dataclass(frozen=True, kw_only=True)
+class ObservedEvalPerformance:
     tp: int
     tn: int
     fp: int
     fn: int
 
-    @property
-    def tpr(self):
-        return self.tp / (self.tp + self.fn)
+    def _sample_confusion_rates(
+        self,
+        n: int,
+        prior_alpha: tuple[float, float, float, float],
+        rng: np.random.Generator,
+    ) -> list["SampledConfusionRates"]:
+        concentration = np.array(prior_alpha) + np.array(
+            [self.tp, self.tn, self.fp, self.fn]
+        )
+        return [
+            SampledConfusionRates(p_tp=p_tp, p_tn=p_tn, p_fp=p_fp, p_fn=p_fn)
+            for p_tp, p_tn, p_fp, p_fn in rng.dirichlet(concentration, size=n)
+        ]
+
+    def _sample_gold_probs(
+        self,
+        gold: bool,
+        predictions: Sequence[bool],
+        n_samples: int,
+        per_rate_samples: int,
+        prior_alpha: tuple[float, float, float, float],
+        rng: np.random.Generator,
+    ) -> np.ndarray[tuple[int, int]]:
+        preds = np.asarray(predictions, dtype=bool)
+        conf_rates_samples = self._sample_confusion_rates(
+            n=n_samples,
+            prior_alpha=prior_alpha,
+            rng=rng,
+        )
+        samples: list[np.ndarray] = []
+        for conf_rates in conf_rates_samples:
+            p_gold_if_pred_true = conf_rates.p_gold_given_pred(gold=gold, pred=True)
+            p_gold_if_pred_false = conf_rates.p_gold_given_pred(gold=gold, pred=False)
+            samples.append(np.where(preds, p_gold_if_pred_true, p_gold_if_pred_false))
+
+        # (n_samples*per_rate_samples x n_predictions)
+        return np.array(samples).repeat(per_rate_samples, axis=0)
+
+    def sample_true_labels(
+        self,
+        predictions: Sequence[bool],
+        n_samples: int,
+        per_rate_samples: int,
+        prior_alpha: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        rng: np.random.Generator | None = None,
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.bool]]:
+        """Return shape is n_samples x n_preds"""
+        if rng is None:
+            rng = np.random.default_rng()
+        per_instance_p = self._sample_gold_probs(
+            gold=True,
+            predictions=predictions,
+            n_samples=n_samples,
+            per_rate_samples=per_rate_samples,
+            prior_alpha=prior_alpha,
+            rng=rng,
+        )
+        return rng.random(per_instance_p.shape) < per_instance_p
+
+    @classmethod
+    def sample_at_least_one_true_labels(
+        cls,
+        eval_perfs_and_predictions: Sequence[tuple[Self, Sequence[bool]]],
+        n_samples: int,
+        per_rate_samples: int,
+        prior_alpha: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        rng: np.random.Generator | None = None,
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.bool]]:
+        """Return shape is n_samples x n_preds"""
+        if rng is None:
+            rng = np.random.default_rng()
+        n_preds = len(eval_perfs_and_predictions[0][1])
+
+        # Calclate the probability of all categories being negative,
+        # then subtract from one to get the probability of at least one
+        # being positive.
+        p_all_false = np.ones((n_samples * per_rate_samples, n_preds))
+        for eval_perf, predictions in eval_perfs_and_predictions:
+            p_all_false *= eval_perf._sample_gold_probs(
+                gold=False,
+                predictions=predictions,
+                n_samples=n_samples,
+                per_rate_samples=per_rate_samples,
+                prior_alpha=prior_alpha,
+                rng=rng,
+            )
+        p_any_true = np.ones_like(p_all_false) - p_all_false
+        return rng.random(p_any_true.shape) < p_any_true
+
+
+@dataclass(frozen=True, kw_only=True)
+class SampledConfusionRates:
+    p_tp: float
+    p_tn: float
+    p_fp: float
+    p_fn: float
+
+    def __post_init__(self):
+        if abs((self.p_tp + self.p_tn + self.p_fp + self.p_fn) - 1) > 1e-6:
+            raise ValueError("confusion rates must sum to 1")
+        if any(x < 0 for x in (self.p_tp, self.p_tn, self.p_fp, self.p_fn)):
+            raise ValueError("confusion rates must not be negative")
 
     @property
-    def fnr(self):
-        return self.fn / (self.tp + self.fn)
+    def tpr(self) -> float:
+        return self.p_tp / (self.p_tp + self.p_fn)
 
     @property
-    def N(self):
-        return self.tp + self.tn + self.fp + self.fn
+    def fnr(self) -> float:
+        return self.p_fn / (self.p_tp + self.p_fn)
 
-    def p_gold(self, gold: bool):
+    def p_gold(self, gold: bool) -> float:
         if gold:
-            return (self.tp + self.fn) / self.N
+            return self.p_tp + self.p_fn
         else:
-            return (self.fp + self.tn) / self.N
+            return self.p_fp + self.p_tn
 
-    def p_pred(self, pred: bool):
+    def p_pred(self, pred: bool) -> float:
         if pred:
-            return (self.tp + self.fp) / self.N
+            return self.p_tp + self.p_fp
         else:
-            return (self.tn + self.fn) / self.N
+            return self.p_tn + self.p_fn
 
-    def p_gold_given_pred(self, gold: bool, pred: bool):
+    def p_gold_given_pred(self, gold: bool, pred: bool) -> float:
         if pred:
             # P(gold=1|pred=1) = P(pred=1|gold=1) * P(gold=1) / P(pred=1)
             p = self.tpr * self.p_gold(True) / self.p_pred(True)
@@ -108,26 +211,6 @@ class EvalResult(NamedTuple):
             p = 1 - p
 
         return p
-
-    @classmethod
-    def p_at_least_one_gold(
-        cls, eval_results: list[Self], predicted_labels: list[bool]
-    ):
-        """Calculate the probability that the gold label is `True` for at least one category.
-
-        Args:
-            eval_results: A list of `EvalResult` objects, one for each category.
-            predicted_labels: A list of predicted labels, one for each category.
-
-        Returns:
-            The probability that the gold label for at least one of the categories is `True`.
-        """
-        # use p_gold_given_pred to calculate the probability that
-        # NONE of the gold labels are True, then subtract from 1
-        p_no_gold = 1.0
-        for eval_result, pred in zip(eval_results, predicted_labels, strict=True):
-            p_no_gold *= eval_result.p_gold_given_pred(gold=False, pred=pred)
-        return 1 - p_no_gold
 
 
 def parse_mesh_hierarchy() -> pl.DataFrame:
