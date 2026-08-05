@@ -1,59 +1,56 @@
 import json
-import re
 from pathlib import Path
 from typing import Final
 
+import polars as pl
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.solver import (
-    Generate,
-    TaskState,
-    generate,
-    solver,
-    system_message,
-    user_message,
-)
+from inspect_ai.solver import Generate, TaskState, generate, solver, system_message
 
-from preprocess import find_outcome_edits, preprocess_raw_data
+from preprocess import Preprocessor
 
 PROMPTS_DIR: Final = Path(__file__).parent / "prompts"
 SYSTEM_PROMPT_FILE: Final = PROMPTS_DIR / "system_prompt.txt"
-FINAL_ANSWER_PROMPT_FILE: Final = PROMPTS_DIR / "final_answer_prompt.txt"
 USER_PROMPT_TEMPLATE_FILE: Final = PROMPTS_DIR / "user_template.txt"
 
 SCHEMA_CATEGORIES: Final = (
-    "rewording/rephrasing",
-    "elaboration",
-    "modification",
-    "reordering",
+    "time frame change",
     "addition",
     "removal",
+    "other",
 )
 
 
-def outcome_edits_dataset(raw_data_dir: str, raw_labels_file: str | None = None):
-    """Create a dataset of primary outcome edits for model evaluation.
-
-    Args:
-        raw_data_dir: Path to the raw trial data.
-        raw_labels_file: *Not yet implemented* A file containing true labels for the data. Defaults to None.
-
-    Returns:
-        The dataset for evaluation.
-    """
-
-    if raw_labels_file is not None:
-        raise NotImplementedError("evals with labeled data not yet implemented")
-
+def outcome_edits_dataset(raw_data_file: str):
     with open(USER_PROMPT_TEMPLATE_FILE) as f:
         user_prompt_template = f.read()
 
-    latest, summaries, originals = preprocess_raw_data(raw_data_dir)
-    outcome_edits = find_outcome_edits(latest, summaries, originals)
-    rows = outcome_edits.rows(named=True)
+    preprocessor = Preprocessor(raw_data_file)
+    preprocessor.apply_filters_for_eval()
+    dataset_df = (
+        preprocessor.df.select(
+            "nct_id",
+            "version",
+            "labels",
+            pl.col("data")
+            .struct.field("study")
+            .struct.field("protocolSection")
+            .struct.field("outcomesModule")
+            .struct.field("primaryOutcomes"),
+        )
+        .explode("labels")
+        .pivot("labels", index="nct_id")
+        .select(
+            "nct_id",
+            version_before="version_prospective",
+            version_after="version_latest",
+            primary_outcomes_before="primaryOutcomes_prospective",
+            primary_outcomes_after="primaryOutcomes_latest",
+        )
+    )
 
     samples: list[Sample] = []
-    for row in rows:
+    for row in dataset_df.rows(named=True):
         samples.append(
             Sample(
                 input=user_prompt_template.format(
@@ -69,55 +66,52 @@ def outcome_edits_dataset(raw_data_dir: str, raw_labels_file: str | None = None)
         )
 
     return MemoryDataset(
-        location=raw_data_dir,
+        location=raw_data_file,
         samples=samples,
     )
 
 
 @solver
 def parse_model_response():
-    # pattern to match a comma-separated array of integers enclosed in square brackets
-    int_arr_pattern = re.compile(r"\[[0-9]+(,\ ?[0-9]+)*\]")
+    """A solver to extract predictions and explanation from a model response."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        response = state.messages[-1].text
-        m = int_arr_pattern.search(response)
-        result: list[int] = sorted(
-            set(
-                []
-                if m is None
-                else [int(x.strip()) for x in m.group(0).strip("[]").split(",")]
-            )
-        )
+        model_response = state.output.completion
+
+        explanation: str = ""
+        predicted_categories: list[str] = []
+
+        for part in model_response.split("### "):
+            if part.startswith("ANSWER"):
+                answer = part.removeprefix("ANSWER").strip()
+                predicted_categories = [
+                    category
+                    for category in SCHEMA_CATEGORIES
+                    if category in [c.strip() for c in answer.lower().split(",")]
+                ]
+            if part.startswith("EXPLANATION"):
+                explanation = part.removeprefix("EXPLANATION").strip()
+
         state.metadata["model_prediction"] = {
-            "categories": [
-                SCHEMA_CATEGORIES[i - 1]
-                for i in result
-                if 0 < i <= len(SCHEMA_CATEGORIES)
-            ],
-            "explanation": next(
-                m for m in state.messages if m.role == "assistant"
-            ).text,
+            "categories": predicted_categories,
+            "explanation": explanation,
         }
+
         return state
 
     return solve
 
 
 @task
-def outcome_switching_task(raw_data_dir: str, raw_labels_file: str | None = None):
+def outcome_switching_task(raw_data_file: str):
     with open(SYSTEM_PROMPT_FILE) as f:
         system_prompt = f.read()
 
-    with open(FINAL_ANSWER_PROMPT_FILE) as f:
-        final_answer_prompt = f.read()
-
     return Task(
-        dataset=outcome_edits_dataset(raw_data_dir, raw_labels_file),
+        dataset=outcome_edits_dataset(raw_data_file),
         solver=[
+            # workaround for weird formatting behavior with JSON examples in prompt
             system_message("{system_prompt}", system_prompt=system_prompt),
-            generate(),
-            user_message("{fa_prompt}", fa_prompt=final_answer_prompt),
             generate(),
             parse_model_response(),
         ],
